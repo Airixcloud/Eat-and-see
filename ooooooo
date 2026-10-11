@@ -1,0 +1,248 @@
+import os
+import time
+import cv2
+import numpy as np
+import tkinter as tk
+from tkinter import messagebox, filedialog
+from PIL import Image, ImageTk
+from ultralytics import YOLO
+
+class ObjectLockInApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Ứng Dụng Khóa Mục Tiêu Đồ Vật & Tự Động Chụp Ảnh (2 Giây)")
+        self.root.geometry("800x640")
+        self.root.configure(bg="#212121")
+
+        # Load mô hình YOLOv8 Nano để phát hiện vị trí vật thể
+        print("Đang tải mô hình YOLOv8...")
+        self.model = YOLO("yolov8n.pt")
+
+        self.cap = None
+        self.detected_objects = []  # Chỉ lưu tọa độ bbox: [(x1, y1, x2, y2), ...]
+        self.locked_object_index = None  
+        
+        # Biến quản lý tính năng tự động chụp sau 2 giây
+        self.lock_start_time = None
+        self.has_captured = False
+        self.roi_to_save = None
+
+        # --- GIAO DIỆN GUI ---
+        self.canvas_w = 640
+        self.canvas_h = 480
+        self.canvas = tk.Canvas(root, width=self.canvas_w, height=self.canvas_h, bg="black", highlightthickness=0)
+        self.canvas.pack(pady=10)
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+
+        self.status_label = tk.Label(
+            root, 
+            text="[HƯỚNG DẪN] Click vào đồ vật để KHÓA MỤC TIÊU", 
+            font=("Arial", 11, "bold"), 
+            fg="#00E676",
+            bg="#212121"
+        )
+        self.status_label.pack(pady=5)
+
+        btn_frame = tk.Frame(root, bg="#212121")
+        btn_frame.pack(pady=10)
+
+        self.btn_toggle = tk.Button(
+            btn_frame, 
+            text="🎥 Mở Camera", 
+            font=("Arial", 11, "bold"), 
+            bg="#4CAF50", 
+            fg="white", 
+            padx=12, 
+            pady=6, 
+            command=self.toggle_camera
+        )
+        self.btn_toggle.grid(row=0, column=0, padx=10)
+
+        self.btn_unlock = tk.Button(
+            btn_frame, 
+            text="🔓 Hủy Khóa Mục Tiêu", 
+            font=("Arial", 11, "bold"), 
+            bg="#FF9800", 
+            fg="white", 
+            padx=12, 
+            pady=6, 
+            command=self.unlock_target
+        )
+        self.btn_unlock.grid(row=0, column=1, padx=10)
+
+    def toggle_camera(self):
+        if self.cap is None:
+            self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(0)
+                
+            if not self.cap.isOpened():
+                messagebox.showerror("Lỗi", "Không thể kết nối với Webcam!")
+                self.cap = None
+                return
+
+            self.btn_toggle.config(text="🛑 Tắt Camera", bg="#f44336")
+            self.unlock_target()
+            self.update_feed()
+        else:
+            self.stop_camera()
+
+    def stop_camera(self):
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+
+        self.btn_toggle.config(text="🎥 Mở Camera", bg="#4CAF50")
+        self.status_label.config(text="[OFF] CHƯA BẬT CAMERA", fg="gray")
+        self.canvas.delete("all")
+
+    def unlock_target(self):
+        self.locked_object_index = None
+        self.lock_start_time = None
+        self.has_captured = False
+        self.roi_to_save = None
+        self.status_label.config(text="[UNLOCKED] Đã hủy khóa. Hãy click chọn mục tiêu mới!", fg="#00E676")
+
+    def save_captured_image(self):
+        """Mở hộp thoại cho phép chọn đường dẫn và tên file để lưu ảnh cắt của mục tiêu"""
+        if self.roi_to_save is None or self.roi_to_save.size == 0:
+            return
+
+        default_filename = f"locked_object_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+        
+        # Mở cửa sổ lưu file của hệ điều hành
+        file_path = filedialog.asksaveasfilename(
+            title="Chọn vị trí & đặt tên file để lưu ảnh",
+            initialfile=default_filename,
+            defaultextension=".jpg",
+            filetypes=[("JPEG Image", "*.jpg"), ("PNG Image", "*.png"), ("All Files", "*.*")]
+        )
+
+        if file_path:
+            cv2.imwrite(file_path, self.roi_to_save, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            messagebox.showinfo("Thành công", f"Đã lưu ảnh mục tiêu vào:\n{file_path}")
+            self.status_label.config(text=f"✅ ĐÃ LƯU: {os.path.basename(file_path)}", fg="#00E676")
+        else:
+            self.status_label.config(text="⚠️ Đã hủy lưu ảnh", fg="#FFEB3B")
+
+    def on_canvas_click(self, event):
+        click_x, click_y = event.x, event.y
+
+        if not self.detected_objects:
+            return
+
+        selected_idx = None
+        min_area = float('inf')
+
+        for idx, bbox in enumerate(self.detected_objects):
+            x1, y1, x2, y2 = bbox
+            if x1 <= click_x <= x2 and y1 <= click_y <= y2:
+                area = (x2 - x1) * (y2 - y1)
+                if area < min_area:
+                    min_area = area
+                    selected_idx = idx
+
+        if selected_idx is not None:
+            self.locked_object_index = selected_idx
+            self.lock_start_time = time.time()  # Bắt đầu đếm thời gian 2 giây
+            self.has_captured = False
+            self.roi_to_save = None
+
+    def update_feed(self):
+        if self.cap is None or not self.cap.isOpened():
+            return
+
+        ret, frame = self.cap.read()
+        if ret:
+            # Sửa lỗi ngược chuyển động
+            frame = cv2.flip(frame, 1)
+            frame = cv2.resize(frame, (self.canvas_w, self.canvas_h))
+            
+            # Chạy YOLOv8 để xác định vị trí đồ vật
+            results = self.model(frame, stream=True, verbose=False)
+            
+            new_detected_objects = []
+            for r in results:
+                boxes = r.boxes
+                for box in boxes:
+                    cls_id = int(box.cls[0])
+                    
+                    # Bỏ qua con người (class_id == 0)
+                    if cls_id == 0:
+                        continue
+
+                    conf = float(box.conf[0])
+                    if conf > 0.4:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        new_detected_objects.append((x1, y1, x2, y2))
+
+            self.detected_objects = new_detected_objects
+
+            # Tránh lỗi index out of bounds khi vật thể di chuyển khỏi màn hình
+            if self.locked_object_index is not None and self.locked_object_index >= len(self.detected_objects):
+                self.unlock_target()
+
+            # Xử lý đếm ngược 2 giây và chụp ảnh
+            if self.locked_object_index is not None and not self.has_captured:
+                elapsed = time.time() - self.lock_start_time
+                remaining = max(0, 2 - int(elapsed))  # Đổi thời gian chờ xuống 2 giây
+
+                if remaining > 0:
+                    self.status_label.config(
+                        text=f"🎯 [LOCKED] ĐÃ KHÓA MỤC TIÊU! SẼ TỰ ĐỘNG CHỤP SAU: {remaining} GIÂY...", 
+                        fg="#FFEB3B"
+                    )
+                else:
+                    # Đã đủ 2 giây -> Thực hiện chụp phần hình ảnh đồ vật
+                    self.has_captured = True
+                    x1, y1, x2, y2 = self.detected_objects[self.locked_object_index]
+                    self.roi_to_save = frame[y1:y2, x1:x2].copy()
+                    
+                    self.status_label.config(text="📸 ĐÃ CHỤP! VUI LÒNG CHỌN NƠI LƯU FILE...", fg="#00E676")
+                    
+                    # Mở hộp thoại chọn thư mục & file để lưu
+                    self.root.after(100, self.save_captured_image)
+
+            # Vẽ các khung vật thể lên màn hình
+            for idx, bbox in enumerate(self.detected_objects):
+                x1, y1, x2, y2 = bbox
+
+                if idx == self.locked_object_index:
+                    # KHÓA MỤC TIÊU (Khung Xanh Lá + 4 góc Target Lock)
+                    color = (0, 255, 0)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+                    cw = max(6, int((x2 - x1) * 0.15))
+                    ch = max(6, int((y2 - y1) * 0.15))
+                    cv2.line(frame, (x1, y1), (x1 + cw, y1), color, 3)
+                    cv2.line(frame, (x1, y1), (x1, y1 + ch), color, 3)
+                    cv2.line(frame, (x2, y1), (x2 - cw, y1), color, 3)
+                    cv2.line(frame, (x2, y1), (x2, y1 + ch), color, 3)
+                    cv2.line(frame, (x1, y2), (x1 + cw, y2), color, 3)
+                    cv2.line(frame, (x1, y2), (x1, y2 - ch), color, 3)
+                    cv2.line(frame, (x2, y2), (x2 - cw, y2), color, 3)
+                    cv2.line(frame, (x2, y2), (x2, y2 - ch), color, 3)
+
+                    tag = "TARGET LOCKED" if not self.has_captured else "CAPTURED"
+                    cv2.putText(frame, tag, (x1, max(y1 - 10, 20)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+                else:
+                    # Khung vật thể mờ chờ chọn
+                    color = (200, 200, 200)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+
+            # Cập nhật khung hình hiển thị
+            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img_rgb)
+            img_tk = ImageTk.PhotoImage(image=img_pil)
+
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+            self.canvas.img_tk = img_tk
+
+        self.root.after(20, self.update_feed)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ObjectLockInApp(root)
+    root.protocol("WM_DELETE_WINDOW", lambda: (app.stop_camera(), root.destroy()))
+    root.mainloop()
