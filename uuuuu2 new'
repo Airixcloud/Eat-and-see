@@ -1,0 +1,273 @@
+import os
+import time
+import cv2
+import numpy as np
+import tkinter as tk
+from tkinter import messagebox, filedialog
+from PIL import Image, ImageTk
+from ultralytics import YOLO
+
+class DeviceImageLockApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Khóa Mục Tiêu & Tự Động Lưu Ảnh Từ Thiết Bị")
+        self.root.geometry("800x700")
+        self.root.configure(bg="#212121")
+
+        # Load mô hình YOLOv8 Nano (hỗ trợ chế độ camera)
+        print("Đang tải mô hình YOLOv8...")
+        self.model = YOLO("yolov8n.pt")
+
+        self.cap = None
+        self.mode = "CAMERA"  # Chế độ hoạt động: "CAMERA" hoặc "STATIC_IMAGE"
+        
+        self.current_frame = None
+        self.display_frame = None
+        self.loaded_image = None # Lưu ảnh tải từ thiết bị
+
+        # Biến quản lý tính năng tự vẽ khung thủ công
+        self.is_drawing = False
+        self.start_x = 0
+        self.start_y = 0
+        self.current_mouse_x = 0
+        self.current_mouse_y = 0
+        self.manual_drawn_box = None  
+
+        # Biến quản lý lưu ảnh
+        self.roi_to_save = None
+
+        # --- GIAO DIỆN GUI ---
+        self.canvas_w = 640
+        self.canvas_h = 480
+        self.canvas = tk.Canvas(root, width=self.canvas_w, height=self.canvas_h, bg="black", highlightthickness=0)
+        self.canvas.pack(pady=10)
+        
+        # Gắn sự kiện chuột để vẽ khung mượt mà
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+
+        self.status_label = tk.Label(
+            root, 
+            text="[HƯỚNG DẪN] Mở Camera hoặc Tải Ảnh từ thiết bị -> Kéo chuột trái vẽ khung để tự động cắt & lưu!", 
+            font=("Arial", 9, "bold"), 
+            fg="#00E676",
+            bg="#212121"
+        )
+        self.status_label.pack(pady=5)
+
+        btn_frame = tk.Frame(root, bg="#212121")
+        btn_frame.pack(pady=10)
+
+        self.btn_toggle = tk.Button(
+            btn_frame, 
+            text="🎥 Mở Camera", 
+            font=("Arial", 10, "bold"), 
+            bg="#4CAF50", 
+            fg="white", 
+            padx=10, 
+            pady=5, 
+            command=self.toggle_camera
+        )
+        self.btn_toggle.grid(row=0, column=0, padx=8)
+
+        self.btn_load = tk.Button(
+            btn_frame, 
+            text="📁 Tải Ảnh Từ Thiết Bị", 
+            font=("Arial", 10, "bold"), 
+            bg="#2196F3", 
+            fg="white", 
+            padx=10, 
+            pady=5, 
+            command=self.load_image_from_device
+        )
+        self.btn_load.grid(row=0, column=1, padx=8)
+
+        self.btn_unlock = tk.Button(
+            btn_frame, 
+            text="🔓 Đặt Lại / Làm Mới", 
+            font=("Arial", 10, "bold"), 
+            bg="#FF9800", 
+            fg="white", 
+            padx=10, 
+            pady=5, 
+            command=self.reset_workspace
+        )
+        self.btn_unlock.grid(row=0, column=2, padx=8)
+
+    def toggle_camera(self):
+        if self.cap is None:
+            self.stop_image_mode()
+            self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(0)
+                
+            if not self.cap.isOpened():
+                messagebox.showerror("Lỗi", "Không thể kết nối với Webcam!")
+                self.cap = None
+                return
+
+            self.mode = "CAMERA"
+            self.btn_toggle.config(text="🛑 Tắt Camera", bg="#f44336")
+            self.reset_workspace()
+            self.update_feed()
+        else:
+            self.stop_camera()
+
+    def stop_camera(self):
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+
+        self.btn_toggle.config(text="🎥 Mở Camera", bg="#4CAF50")
+        self.status_label.config(text="[OFF] CHƯA BẬT CAMERA HOẶC CHƯA TẢI ẢNH", fg="gray")
+        self.canvas.delete("all")
+
+    def stop_image_mode(self):
+        self.loaded_image = None
+
+    def load_image_from_device(self):
+        """Cho phép chọn file ảnh từ thiết bị"""
+        self.stop_camera()
+        
+        file_path = filedialog.askopenfilename(
+            title="Chọn ảnh từ thiết bị",
+            filetypes=[("Image Files", "*.jpg *.jpeg *.png *.bmp *.webp"), ("All Files", "*.*")]
+        )
+
+        if file_path:
+            img = cv2.imread(file_path)
+            if img is not None:
+                # Resize ảnh về đúng kích thước chuẩn của khung hiển thị (640x480)
+                self.loaded_image = cv2.resize(img, (self.canvas_w, self.canvas_h))
+                self.mode = "STATIC_IMAGE"
+                self.reset_workspace()
+                self.display_static_image()
+                self.status_label.config(text="📁 ĐÃ TẢI ẢNH! Hãy nhấn giữ & kéo chuột trái vẽ khung quanh đồ vật muốn lấy.", fg="#00E676")
+            else:
+                messagebox.showerror("Lỗi", "Không thể đọc file ảnh này!")
+
+    def display_static_image(self):
+        if self.loaded_image is not None:
+            display_img = self.loaded_image.copy()
+            if self.is_drawing:
+                cv2.rectangle(display_img, (self.start_x, self.start_y), (self.current_mouse_x, self.current_mouse_y), (0, 140, 255), 2)
+            
+            img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img_rgb)
+            img_tk = ImageTk.PhotoImage(image=img_pil)
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+            self.canvas.img_tk = img_tk
+
+    def reset_workspace(self):
+        self.manual_drawn_box = None
+        self.is_drawing = False
+        self.roi_to_save = None
+        if self.mode == "STATIC_IMAGE" and self.loaded_image is not None:
+            self.display_static_image()
+            self.status_label.config(text="🎯 Đã làm mới. Hãy vẽ khung mới trên ảnh!", fg="#00E676")
+
+    def save_captured_image(self):
+        if self.roi_to_save is None or self.roi_to_save.size == 0:
+            return
+
+        default_filename = f"cropped_object_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
+        file_path = filedialog.asksaveasfilename(
+            title="Lưu ảnh đối tượng vào thiết bị",
+            initialfile=default_filename,
+            defaultextension=".jpg",
+            filetypes=[("JPEG Image", "*.jpg"), ("PNG Image", "*.png"), ("All Files", "*.*")]
+        )
+
+        if file_path:
+            cv2.imwrite(file_path, self.roi_to_save, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            messagebox.showinfo("Thành công", f"Đã tự động lưu ảnh vào thiết bị tại:\n{file_path}")
+            self.status_label.config(text=f"✅ ĐÃ LƯU XONG: {os.path.basename(file_path)}", fg="#00E676")
+        else:
+            self.status_label.config(text="⚠️ Đã hủy lưu file", fg="#FFEB3B")
+
+    # --- SỰ KIỆN CHUỘT VẼ KHUNG ---
+    def on_mouse_down(self, event):
+        if self.mode == "CAMERA" and (self.cap is None or not self.cap.isOpened()):
+            return
+        if self.mode == "STATIC_IMAGE" and self.loaded_image is None:
+            return
+
+        self.is_drawing = True
+        self.start_x, self.start_y = event.x, event.y
+        self.current_mouse_x, self.current_mouse_y = event.x, event.y
+
+    def on_mouse_drag(self, event):
+        if self.is_drawing:
+            self.current_mouse_x = max(0, min(event.x, self.canvas_w))
+            self.current_mouse_y = max(0, min(event.y, self.canvas_h))
+            
+            if self.mode == "STATIC_IMAGE":
+                self.display_static_image()
+
+    def on_mouse_up(self, event):
+        if not self.is_drawing:
+            return
+        self.is_drawing = False
+        end_x, end_y = max(0, min(event.x, self.canvas_w)), max(0, min(event.y, self.canvas_h))
+
+        x1 = min(self.start_x, end_x)
+        y1 = min(self.start_y, end_y)
+        x2 = max(self.start_x, end_x)
+        y2 = max(self.start_y, end_y)
+
+        # Kiểm tra kích thước khung vẽ hợp lệ (> 15 pixel)
+        if (x2 - x1) > 15 and (y2 - y1) > 15:
+            self.manual_drawn_box = (x1, y1, x2, y2)
+            
+            # Cắt ảnh từ nguồn tương ứng (Camera hoặc Ảnh tải lên)
+            source_frame = self.current_frame if self.mode == "CAMERA" else self.loaded_image
+            if source_frame is not None:
+                self.roi_to_save = source_frame[y1:y2, x1:x2].copy()
+                self.status_label.config(text="📸 ĐÃ VẼ KHUNG & CẮT ẢNH! Đang mở bảng chọn nơi lưu...", fg="#00E676")
+                
+                # Hiển thị lại khung đã vẽ trên giao diện trước khi bật popup lưu
+                if self.mode == "STATIC_IMAGE":
+                    display_img = self.loaded_image.copy()
+                    cv2.rectangle(display_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+                    img_tk = ImageTk.PhotoImage(image=Image.fromarray(img_rgb))
+                    self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+                    self.canvas.img_tk = img_tk
+
+                # Tự động bật hộp thoại lưu ảnh xuống thiết bị sau 100ms
+                self.root.after(100, self.save_captured_image)
+        else:
+            self.status_label.config(text="⚠️ Khung vẽ quá nhỏ, vui lòng kéo rộng hơn!", fg="#FFEB3B")
+            if self.mode == "STATIC_IMAGE":
+                self.display_static_image()
+
+    def update_feed(self):
+        if self.mode != "CAMERA" or self.cap is None or not self.cap.isOpened():
+            return
+
+        ret, frame = self.cap.read()
+        if ret:
+            frame = cv2.flip(frame, 1)
+            frame = cv2.resize(frame, (self.canvas_w, self.canvas_h))
+            self.current_frame = frame.copy()
+            self.display_frame = frame.copy()
+
+            # Nếu đang kéo chuột vẽ khung trên camera
+            if self.is_drawing:
+                cv2.rectangle(self.display_frame, (self.start_x, self.start_y), (self.current_mouse_x, self.current_mouse_y), (0, 140, 255), 2)
+
+            img_rgb = cv2.cvtColor(self.display_frame, cv2.COLOR_BGR2RGB)
+            img_pil = Image.fromarray(img_rgb)
+            img_tk = ImageTk.PhotoImage(image=img_pil)
+
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+            self.canvas.img_tk = img_tk
+
+        self.root.after(20, self.update_feed)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = DeviceImageLockApp(root)
+    root.protocol("WM_DELETE_WINDOW", lambda: (app.stop_camera(), root.destroy()))
+    root.mainloop()
