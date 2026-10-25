@@ -12,3 +12,7 @@ __pycache__/
 
 # Virtual environments
 .venv
+
+# Large auto-downloaded weights and local backups
+yolov8n.pt
+trash_classifier_old.keras
