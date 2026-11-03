@@ -16,3 +16,8 @@ __pycache__/
 # Large auto-downloaded weights and local backups
 yolov8n.pt
 trash_classifier_old.keras
+
+cloudflared.exe
+models/yolov8m.pt
+*.pt
+.DS_Store

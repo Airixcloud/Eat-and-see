@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Greener - AI Vision & 3D Waste Sorting</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="fullscreen-showcase">
+
+  <!-- Ambient Dynamic Cursor -->
+  <div class="cursor-glow" id="cursorGlow"></div>
+  <div class="cursor-dot" id="cursorDot"></div>
+
+  <!-- Fullscreen 3D WebGL Canvas (Hero Character) -->
+  <canvas id="threeCanvas"></canvas>
+
+  <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileSelect(event)">
+
+  <!-- Minimalist Brand Identifier (Top-Left) -->
+  <div class="minimal-brand">
+    <div class="brand-glyph">🌱</div>
+    <div class="brand-meta">
+      <span class="brand-name">Greener</span>
+      <span class="brand-tag"><span class="status-dot"></span> AI Vision & 3D Sorting</span>
+    </div>
+  </div>
+
+  <!-- Minimalist Performance Badge (Top-Right) -->
+  <div class="minimal-top-right">
+    <div class="tech-pill">
+      <span class="pill-dot"></span>
+      <span class="pill-text">60 FPS • YOLOv8 + CNN</span>
+    </div>
+  </div>
+
+  <!-- Center Floating Interactive Prompt -->
+  <div class="sphere-hint" id="sphereHint">
+    <span class="pulse-icon">🌐</span>
+    <div class="hint-text">
+      <strong>QUẢ CẦU QUÉT 3D TƯƠNG TÁC</strong>
+      <span>Rê chuột để gợn sóng • Nhấp quả cầu để kích hoạt Camera</span>
+    </div>
+  </div>
+
+  <!-- Cyberpunk Sci-Fi Camera Stage (Clean 16:9 Viewfinder, Completely Clear Center) -->
+  <div class="cyber-camera-stage" id="cyberCameraStage" style="display: none;">
+    <div class="camera-frame-wrapper" id="cameraFrameWrapper">
+      <!-- 4 Ultra-Thin Neon Corner Brackets -->
+      <div class="cyber-bracket bracket-tl"></div>
+      <div class="cyber-bracket bracket-tr"></div>
+      <div class="cyber-bracket bracket-bl"></div>
+      <div class="cyber-bracket bracket-br"></div>
+
+      <!-- Vertical Laser Scan Beam (Smooth sweep from top to bottom) -->
+      <div class="cyber-scan-laser" id="cyberScanLaser"></div>
+
+      <!-- Camera Shutter Flash Overlay -->
+      <div class="camera-flash-overlay" id="cameraFlashOverlay"></div>
+
+      <!-- Freeze Screen Resume Action Pill -->
+      <div class="freeze-hint-pill" id="freezeHintPill" style="display: none;" onclick="resumeCameraStream()">
+        <span>▶</span> Bấm Để Quét Tiếp
+      </div>
+
+      <!-- Top Status Chip Bar -->
+      <div class="frame-hud-bar frame-hud-top">
+        <span class="cyber-chip live-chip" id="cameraStatusChip"><span class="blink-dot"></span> AI VISION ACTIVE</span>
+        <span class="cyber-chip" id="cameraSubChip">16:9 HD • MIRROR NATURAL</span>
+      </div>
+
+      <!-- Bottom Status Chip Bar -->
+      <div class="frame-hud-bar frame-hud-bottom">
+        <span class="cyber-chip" id="scanStatusChip">SMART-SCAN: READY</span>
+        <span class="cyber-chip glow-accent">ECO-VISION v2.4</span>
+      </div>
+
+      <!-- Crisp Live Webcam Video with Natural Mirror Flip -->
+      <video id="videoFeed" autoplay playsinline muted></video>
+
+      <!-- Canvas for image processing / sample view -->
+      <canvas id="imageCanvas" style="display: none;"></canvas>
+
+      <!-- Bounding Boxes Overlay Layer for YOLO Detections -->
+      <div class="detection-layer" id="detectionLayer"></div>
+    </div>
+  </div>
+
+  <!-- Floating Glass HUD for Live Diagnostics (Top-Right Glass Card) -->
+  <aside class="floating-hud-card" id="floatingResultHud">
+    <div class="hud-header">
+      <div class="hud-title">
+        <span>📊</span> Kết Quả Nhận Diện
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="result-header-badge badge-recyclable" id="catBadge">Sẵn sàng</span>
+        <button class="hud-close-btn" onclick="toggleResultHud(false)" title="Đóng bảng kết quả">✕</button>
+      </div>
+    </div>
+
+    <!-- Main Prediction Info -->
+    <div class="main-prediction">
+      <div class="pred-label">Vật Thể Nhận Diện</div>
+      <div class="pred-item-title" id="predItemTitle">Chưa có dữ liệu</div>
+      <div class="pred-confidence" id="predConfidence">Độ tin cậy: --%</div>
+      
+      <div class="action-guide-box" id="actionGuideBox">
+        <h4 id="actionGuideTitle">HƯỚNG DẪN XỬ LÝ</h4>
+        <p id="actionGuideText">Kích hoạt camera quét để AI nhận diện chất liệu rác và đưa ra hướng dẫn phân loại chuẩn sinh thái.</p>
+      </div>
+    </div>
+
+    <!-- Probability Breakdown -->
+    <div class="prob-section">
+      <div class="prob-header">
+        <span>Xác Suất Khác</span>
+        <span class="prob-sub">Top 3 Ranking</span>
+      </div>
+      <div class="prob-list" id="probList">
+        <div class="prob-empty">Chờ kích hoạt camera hoặc tải ảnh...</div>
+      </div>
+    </div>
+
+    <!-- Multi-Object Badges -->
+    <div id="multiObjectSection" style="display: none; margin-top: 14px;">
+      <div class="multi-obj-title">
+        <span>🎯</span> Vật Thể Tìm Thấy:
+      </div>
+      <div id="detectedBadges" class="detected-badges-wrap"></div>
+    </div>
+  </aside>
+
+  <!-- Minimal Floating Bottom Dock (VisionOS Style Pill Bar) -->
+  <nav class="floating-dock">
+    <!-- Camera Action Trigger Button -->
+    <button class="dock-btn dock-btn-primary" id="btnDockCamera" onclick="handlePrimaryAction()">
+      <span class="dock-icon" id="btnDockCameraIcon">✨</span>
+      <span class="dock-label" id="btnDockCameraLabel">Quét & Phân Loại</span>
+    </button>
+
+    <!-- Reset to Sphere Button (visible when camera active) -->
+    <button class="dock-btn dock-btn-danger" id="btnDockReset" style="display: none;" onclick="resetCameraToSphere()">
+      <span class="dock-icon">🔄</span>
+      <span class="dock-label">Thu Hồi Quả Cầu</span>
+    </button>
+
+    <div class="dock-divider"></div>
+
+    <!-- Upload Image Button -->
+    <button class="dock-btn" onclick="triggerFileInput()" title="Tải ảnh rác lên">
+      <span class="dock-icon">📁</span>
+      <span class="dock-label">Tải Ảnh</span>
+    </button>
+
+    <div class="dock-divider"></div>
+
+    <!-- Encyclopedia Modal Toggle Button -->
+    <button class="dock-btn" onclick="openEncyclopediaModal()" title="Mở danh mục 30+ loại rác">
+      <span class="dock-icon">📚</span>
+      <span class="dock-label">Danh Mục</span>
+    </button>
+
+    <!-- Toggle HUD Result Card if closed -->
+    <button class="dock-btn" id="btnToggleHud" onclick="toggleResultHud()" title="Bật/Tắt bảng kết quả">
+      <span class="dock-icon">📊</span>
+      <span class="dock-label">Kết Quả</span>
+    </button>
+  </nav>
+
+  <!-- Encyclopedia Modal (Offcanvas / Glass Backdrop Popup) -->
+  <div class="modal-backdrop" id="encyclopediaModal" onclick="handleModalBackdropClick(event)">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>📚</span> Danh Mục Phân Loại Rác & Thiết Bị
+        </div>
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <span class="modal-count" id="classesCount">16 Nhóm Phân Loại</span>
+          <button class="modal-close-btn" onclick="closeEncyclopediaModal()">✕</button>
+        </div>
+      </div>
+
+      <!-- 3 Main Category Tabs + All & E-waste -->
+      <div class="category-tabs-bar" id="categoryTabsBar">
+        <button class="cat-tab active" data-cat="all" onclick="filterClasses('all')">
+          <span>🌐</span> Tất Cả (<span id="countAll">16</span>)
+        </button>
+        <button class="cat-tab tab-recyclable" data-cat="recyclable" onclick="filterClasses('recyclable')">
+          <span>♻️</span> Rác Tái Chế (<span id="countRecyclable">6</span>)
+        </button>
+        <button class="cat-tab tab-organic" data-cat="organic" onclick="filterClasses('organic')">
+          <span>🍂</span> Rác Hữu Cơ (<span id="countOrganic">3</span>)
+        </button>
+        <button class="cat-tab tab-non-recyclable" data-cat="non-recyclable" onclick="filterClasses('non-recyclable')">
+          <span>🚫</span> Rác Vô Cơ (<span id="countNonRecyclable">3</span>)
+        </button>
+        <button class="cat-tab tab-hazardous" data-cat="hazardous" onclick="filterClasses('hazardous')">
+          <span>⚡</span> Rác Điện Tử (<span id="countHazardous">4</span>)
+        </button>
+      </div>
+
+      <!-- Category Info Guidance Banner -->
+      <div class="category-info-banner" id="categoryInfoBanner">
+        <div class="cat-banner-icon" id="catBannerIcon">♻️</div>
+        <div class="cat-banner-content">
+          <h4 id="catBannerTitle">DANH MỤC PHÂN LOẠI RÁC SINH THÁI</h4>
+          <p id="catBannerText">Bấm vào từng loại rác để xem chi tiết cách phân loại chuẩn sinh thái.</p>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="classes-grid" id="classesGrid">
+          <!-- Rendered dynamically via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Class Detail Lightbox Popup -->
+  <div class="modal-backdrop detail-modal-backdrop" id="classDetailModal" style="display: none;" onclick="handleDetailBackdropClick(event)">
+    <div class="modal-card detail-modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="detailModalTitle">
+            <span id="detailModalIcon">📦</span>
+            <span id="detailModalName">Thùng Giấy & Bìa Carton</span>
+          </div>
+          <div id="detailModalSubItems" style="font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; font-weight: 500;"></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span class="result-header-badge" id="detailModalBadge">Rác Tái Chế</span>
+          <button class="modal-close-btn" onclick="closeClassDetailModal()">✕</button>
+        </div>
+      </div>
+      <div class="modal-body detail-modal-body">
+        <!-- Ecological Guide Box -->
+        <div class="detail-guide-box" id="detailGuideBox">
+          <h4 id="detailGuideTitle">HƯỚNG DẪN XỬ LÝ & PHÂN LOẠI</h4>
+          <p id="detailGuideText">Làm sạch, để khô, gấp phẳng trước khi đưa vào thùng tái chế.</p>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+          <button class="modal-confirm-btn" onclick="closeClassDetailModal()">
+            Đã Hiểu
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Basketball Upload Modal (TikTok Inspired @paulcodes4 Animation) -->
+  <div class="modal-backdrop bball-modal-backdrop" id="basketballUploadModal" style="display: none;" onclick="handleUploadBackdropClick(event)">
+    <div class="modal-card bball-modal-card" id="bballModalCard">
+      
+      <!-- Top Bar: Title, Subtitle, Sound Toggle, Counter Pill, Close -->
+      <div class="bball-header">
+        <div class="bball-header-text">
+          <h3 class="bball-title">Upload files</h3>
+          <p class="bball-subtitle">Drag and drop, or take the shot.</p>
+        </div>
+        <div class="bball-header-actions">
+          <button class="bball-sound-btn" id="bballSoundBtn" onclick="toggleUploadSound()" title="Bật/Tắt âm thanh ném bóng">
+            <span id="bballSoundIcon">🔊</span>
+          </button>
+          <button class="bball-counter-pill bball-add-file-btn" id="bballAddFileBtn" onclick="triggerNativeFileInput()" title="Bấm để chọn file hoặc đổi ảnh khác">
+            <span id="bballAddFileIcon">➕</span>
+            <span id="bballAddFileLabel">Thêm File</span>
+          </button>
+          <button class="modal-close-btn bball-close-btn" onclick="closeBasketballModal()">✕</button>
+        </div>
+      </div>
+
+      <!-- Main Stage Container: Drop Zone with Basketball Hoop & Shooting Mechanism -->
+      <div class="bball-arena" id="bballArena">
+        
+        <!-- Dashed Drop Zone Boundary -->
+        <div class="bball-dropzone" id="bballDropzone">
+          
+          <!-- Success File Card (Slides in when file is scored/uploaded) -->
+          <div class="bball-success-card" id="bballSuccessCard" style="display: none;">
+            <div class="bball-success-icon-badge" id="bballSuccessBadge">IMG</div>
+            <div class="bball-success-info">
+              <div class="bball-success-name-row">
+                <span class="bball-success-name" id="bballSuccessName">document.pdf</span>
+                <span class="bball-done-badge">Done</span>
+              </div>
+              <div class="bball-progress-track">
+                <div class="bball-progress-bar" id="bballProgressBar"></div>
+              </div>
+              <div class="bball-success-sub-row">
+                <span class="bball-success-check">✓ File uploaded successfully</span>
+                <span class="bball-success-size" id="bballSuccessSize">2.4 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Drop Prompt Header (Centered in upper dropzone) -->
+          <div class="bball-drop-prompt" id="bballDropPrompt">
+            <div class="bball-upload-icon-circle">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+            </div>
+            <div class="bball-prompt-title">Drop files here</div>
+            <div class="bball-prompt-hint">or take the shot</div>
+          </div>
+
+          <!-- Trajectory Canvas for Dotted Shooting Arc -->
+          <svg class="bball-trajectory-svg" id="bballTrajectorySvg"></svg>
+
+          <!-- Basketball Goal / Hoop Element -->
+          <div class="bball-hoop-container" id="bballHoopContainer">
+            <!-- Backboard -->
+            <div class="bball-backboard">
+              <div class="bball-target-inner"></div>
+            </div>
+            <!-- Hoop Connector & Rim -->
+            <div class="bball-rim-base">
+              <div class="bball-rim-ring" id="bballRimRing"></div>
+            </div>
+            <!-- Net with SVG lines for natural elastic deformation -->
+            <svg class="bball-net-mesh" id="bballNetMesh" viewBox="0 0 80 65">
+              <path class="bball-net-outline" id="bballNetOutline" d="M 8 2 L 18 55 L 40 62 L 62 55 L 72 2 Z" fill="none" stroke="currentColor" stroke-width="1.8" />
+              <!-- Horizontal loops -->
+              <path class="bball-net-hoops" d="M 12 16 Q 40 24 68 16 M 15 32 Q 40 40 65 32 M 17 48 Q 40 56 63 48" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2" />
+              <!-- Vertical cross strings -->
+              <path class="bball-net-strings" d="M 18 2 L 35 60 M 32 2 L 44 62 M 48 2 L 36 62 M 62 2 L 45 60" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2" />
+            </svg>
+          </div>
+
+          <!-- Floating Confetti & Sparkles -->
+          <div class="bball-particles" id="bballParticles"></div>
+        </div>
+
+        <!-- Flying Ball / File Element (Animate along arc) -->
+        <div class="bball-flying-item" id="bballFlyingItem" style="display: none;">
+          <div class="bball-file-card-mini">
+            <div class="bball-mini-corner"></div>
+            <div class="bball-mini-label" id="bballFlyingLabel">ẢNH</div>
+            <div class="bball-mini-icon" id="bballFlyingIcon">🏀</div>
+            <img id="bballFlyingThumb" class="bball-thumb-preview" alt="Preview" style="display: none;" />
+          </div>
+        </div>
+
+        <!-- Bottom Launchpad Area with Draggable File / Ball -->
+        <div class="bball-launchpad" id="bballLaunchpad">
+          <div class="bball-draggable-item" id="bballDraggableItem" title="Bấm để chọn ảnh thật, hoặc kéo ngắm để ném vào rổ!">
+            <div class="bball-file-card-main" id="bballCardMain">
+              <div class="bball-card-corner"></div>
+              <div class="bball-card-badge" id="bballCardBadge">ẢNH</div>
+              <div class="bball-ball-badge" id="bballBallIcon">🏀</div>
+              <img id="bballThumbPreview" class="bball-thumb-preview" alt="Preview" style="display: none;" />
+            </div>
+          </div>
+
+          <div class="bball-instruction" id="bballInstruction">
+            Kéo thả để ngắm & ném bóng vào rổ
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Fullscreen Drag & Drop Overlay Indicator -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-pill">
+      <span style="font-size: 2.2rem;">📸</span>
+      <strong>Thả hình ảnh vào đây để phân tích AI</strong>
+      <span>Hỗ trợ JPG, PNG, WEBP — Tự động nhận diện & khoanh vùng bounding box</span>
+    </div>
+  </div>
+
+  <!-- Vendor Libraries: Three.js and GSAP -->
+  <script src="/static/vendor/three.min.js"></script>
+  <script src="/static/vendor/gsap.min.js"></script>
+
+  <!-- Application Logic -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
